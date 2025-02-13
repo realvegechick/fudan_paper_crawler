@@ -3,13 +3,14 @@ import os
 import re
 from PIL import Image
 import shutil
+import time
+import urllib3
+# 禁用 SSL 警告
+urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
 fid=input("请输入论文fid:")
 jid=input("请输入JSESSIONID:")
-if len(fid)!=32:
-    print("fid格式错误")
-    exit(0)
-if len(jid)!=32 or jid!=jid.upper():
+if jid!=jid.upper():
     print("JSESSIONID格式错误")
     exit(0)
 try:
@@ -26,13 +27,14 @@ except:
 
 # 设置请求的 URL
 url = "https://drm.fudan.edu.cn/read/jumpServlet"
-
+session = requests.Session()
 # 设置请求参数（URL中的查询参数）
 params = {
     "page": "0",
     "fid": fid,
     "userid": "",
-    "visitid": ""
+    "visitid": "",
+    "filename": ""
 }
 # 设置请求头
 headers = {
@@ -56,22 +58,33 @@ headers = {
 pages={}
 print("正在获取目录信息...")
 while True:
-    idx=str(len(pages))
-    params["page"]=idx
+    idx=len(pages)
+    time.sleep(1)
+    print("页数：",idx,end="\r")
+    params["page"]=str(idx)
     # 发送 GET 请求
-    response = requests.get(url, params=params, headers=headers)
-
+    response = session.get(url, params=params, headers=headers)
     # 输出响应内容
     if response.status_code!=200:
+        print("请求失败：",response.status_code)
+        print(response.text)
+        print("请求出错，正在重试...")
+        time.sleep(3)
+        continue
+    if len(response.text)==0:
         break
-    data=response.json()
-    done=0
+    try:
+        data=response.json()
+    except:
+        print("未知错误，正在重试...")
+        time.sleep(3)
+        continue
+    done=1
     for info in data["list"]:
-        if info["id"]==idx:
-            pages[idx]=info["src"]
-            done=1
-            break
-    if not done:
+        if info["id"] not in pages:
+            pages[info["id"]]=info["src"]
+            done=0
+    if done:
         break
 
 if len(pages)==0:
@@ -80,15 +93,17 @@ if len(pages)==0:
 
 print(f"完成目录检索，论文共{idx}页，已找到{len(pages)}页")
 filename=re.search(r'[?&]pdfname=([^&]+)', pages[list(pages.keys())[0]]).group(1).split(".")[0]
-
-os.mkdir("./"+filename)
+if not os.path.exists("./"+filename):
+    os.mkdir("./"+filename)
 for idx in pages:
     print(f"正在获取论文内容：{idx}/{len(pages)}页",end="\r")
     page=pages[idx]
-    response = requests.get(page)
+    response = session.get(page)
     if response.status_code==200:
         open("./"+filename+"/"+idx.rjust(3,"0")+".jpeg",'wb').write(response.content)
-
+    else:
+        print(f"发生错误，第{idx}页未保存")
+    time.sleep(0.5)
 print("\n已保存至"+filename+"文件夹！")
 
 png_files=os.listdir("./"+filename+"/")
